@@ -2,71 +2,27 @@
 
 **AI-powered visual UI testing framework for Playwright.**
 
-visual-test 是一个 Playwright 扩展框架，让你可以用自然语言描述 UI 的视觉期望，AI 模型帮你审查截图并判断通过与否。
+visual-test 是一个 Playwright 扩展框架，让你用自然语言描述 UI 的视觉期望，由 AI 模型审查截图并判断通过与否。它不是一个新的 test runner——你仍然用 Playwright 组织测试、启动浏览器、编写交互逻辑，只是在需要视觉断言的地方调用 `expectVisual`。
 
-```
-npx visual-test init        # 初始化项目
-npx visual-test add Button  # 生成组件测试模板
-```
+## 特性
 
-```typescript
-// visual-tests/components/Button.visual.spec.tsx
-import { test, expectVisual } from 'visual-test/ct'
-
-test('按钮视觉正确', async ({ mount, page }) => {
-  await mount(<Button variant="primary">提交订单</Button>)
-
-  await expectVisual(page, {
-    rules: [
-      '按钮颜色醒目，与背景有足够对比度',
-      '文字居中且清晰可读',
-      '圆角半径合理，无锯齿',
-    ],
-  })
-})
-```
-
-## 四层测试体系
-
-visual-test 面向前端测试方法论中的**视觉断言维度**，扩展现有的 Playwright 测试分层：
-
-| 层次 | 逻辑断言 | 视觉断言（visual-test） |
-|------|---------|-----------------|
-| L2 组件/页面 | vitest + jsdom | visual-test/ct — mount 组件 → AI 分析外观 |
-| L4 E2E | Playwright E2E | visual-test/e2e — 流程截图 → AI 分析 |
+- **自然语言视觉断言** — 用中文或英文描述 UI 期望，无需手写像素级断言
+- **AI Provider 可插拔** — 内置 OpenAI / Anthropic 支持，可接入任意视觉模型
+- **双模式入口** — `visual-test/ct` 用于组件级视觉测试，`visual-test/e2e` 用于端到端流程测试
+- **自动可访问性检查** — 默认集成 axe-core，每次视觉断言同时检查 a11y
+- **零额外 test runner** — 完全基于 Playwright，复用其浏览器自动化、报告和 CI 能力
 
 ## 安装
 
 ```bash
-# Playwright 是 peer dependency，需要先安装
-npm install -D @playwright/test
-# 安装 visual-test
-npm install -D visual-test
+npm install -D @playwright/test visual-test
 ```
 
 ## 快速开始
 
-### 1. 初始化
+### 1. 创建配置文件
 
-```bash
-npx visual-test init
-```
-
-这会创建：
-```
-visual-test.config.ts       # 配置文件（AI provider、a11y、截图策略）
-visual-tests/
-├── components/             # L2 组件视觉测试
-│   └── example.visual.spec.tsx
-├── pages/                  # L2 页面视觉测试
-│   └── example.visual.spec.ts
-└── e2e/                    # L4 流程视觉测试
-    └── example.visual.spec.ts
-```
-
-### 2. 配置 AI provider
-
-编辑 `visual-test.config.ts`，设置 API key（通过环境变量注入）：
+在项目根目录创建 `visual-test.config.ts`：
 
 ```typescript
 import { defineConfig } from 'visual-test'
@@ -75,155 +31,197 @@ export default defineConfig({
   ai: {
     provider: 'openai',
     model: 'gpt-4o',
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: process.env.VISUAL_AI_KEY,
   },
 })
 ```
 
-或者使用 Claude：
+API key 始终通过环境变量注入，不要硬编码在配置文件中。
+
+### 2. 组件视觉测试（L2）
+
+使用 Playwright Component Testing 在真实浏览器中 mount 单个组件，验证其渲染外观：
 
 ```typescript
-ai: {
-  provider: 'anthropic',
-  model: 'claude-3-5-sonnet-20241022',
-  apiKey: process.env.ANTHROPIC_API_KEY,
-}
-```
-
-### 3. 写测试
-
-**组件测试（L2 视觉）** — 使用 Playwright Component Testing：
-
-```typescript
-// visual-tests/components/ProductCard.visual.spec.tsx
+// visual-tests/components/button.visual.spec.tsx
 import { test, expectVisual } from 'visual-test/ct'
-import { ProductCard } from '../../src/components/ProductCard'
+import { Button } from '@/components/Button'
 
-test.describe('ProductCard', () => {
-  test('正常价格显示清晰', async ({ mount, page }) => {
-    await mount(<ProductCard name="运动鞋垫" price={199} />)
-    await expectVisual(page, {
-      rules: ['价格数字清晰醒目', '产品名称完整无截断'],
-    })
+test('primary 样式正常', async ({ mount, page }) => {
+  await mount(<Button variant="primary">Submit</Button>)
+
+  await expectVisual(page, {
+    rules: [
+      '按钮颜色醒目，与背景有足够对比度',
+      '文字居中，字号合适且清晰可读',
+      '圆角平滑，无锯齿',
+    ],
   })
+})
 
-  test('折扣标签不遮挡产品图', async ({ mount, page }) => {
-    await mount(<ProductCard name="运动鞋垫" price={299} discountPrice={199} />)
-    await expectVisual(page, {
-      rules: [
-        '折扣标签完全可见，不遮挡产品图片',
-        '原价有划线效果，折扣价颜色突出',
-      ],
-    })
+test('disabled 状态下视觉正确', async ({ mount, page }) => {
+  await mount(<Button disabled>Submit</Button>)
+
+  await expectVisual(page, {
+    rules: [
+      '按钮整体呈现灰色调，传达不可点击的语义',
+      '文字与背景的对比度仍符合可访问性要求',
+    ],
   })
 })
 ```
 
-**E2E 流程测试（L4 视觉）** — 使用 Playwright E2E：
+### 3. E2E 流程视觉测试（L4）
+
+在完整的端到端测试流程中，对关键页面节点做视觉快照断言：
 
 ```typescript
-// visual-tests/e2e/checkout.visual.spec.ts
+// visual-tests/e2e/user-flow.visual.spec.ts
 import { test, expectVisual } from 'visual-test/e2e'
 
-test('下单全流程视觉正常', async ({ page }) => {
-  await page.goto('/')
+test('注册流程各页面视觉正常', async ({ page }) => {
+  await page.goto('/register')
 
   await expectVisual(page, {
-    name: '首页',
-    rules: ['产品列表布局整齐，无卡片重叠或溢出'],
+    name: '注册首页',
+    rules: ['表单居中，输入框对齐整齐', '提交按钮可见且文案完整'],
   })
 
-  await page.click('.product-card:first-child')
-  await expectVisual(page, {
-    name: '商品详情',
-    rules: ['商品主图清晰，购买按钮可见且文案完整'],
-  })
+  await page.fill('#email', 'user@example.com')
+  await page.click('button[type="submit"]')
 
-  await page.click('#add-to-cart')
   await expectVisual(page, {
-    name: '购物车弹出',
-    rules: ['侧边栏弹出正确，总价显示清晰'],
+    name: '验证码页',
+    rules: ['验证码输入框居中可见', '重新发送按钮存在'],
   })
 })
 ```
 
-### 4. 运行
+### 4. 运行测试
 
 ```bash
-# 运行组件视觉测试
+# L2 组件视觉测试（需先配置 Playwright CT）
 npx playwright test -c playwright-ct.config.ts visual-tests/components/
 
-# 运行 E2E 视觉测试
+# L4 E2E 视觉测试
 npx playwright test visual-tests/e2e/
+```
 
-# 如果配置了 CI 脚本
-npm test
+## 目录结构建议
+
+推荐的测试目录布局：
+
+```
+your-project/
+├── visual-test.config.ts          # visual-test 配置文件
+├── visual-tests/
+│   ├── components/                # L2 组件视觉测试
+│   │   └── *.visual.spec.tsx
+│   └── e2e/                       # L4 E2E 视觉测试
+│       └── *.visual.spec.ts
+└── playwright.config.ts           # Playwright 自身配置
 ```
 
 ## 配置参考
 
 ```typescript
-// visual-test.config.ts
 import { defineConfig } from 'visual-test'
 
 export default defineConfig({
-  // AI 视觉模型配置
+  // AI 视觉模型
   ai: {
-    provider: 'openai',         // 'openai' | 'anthropic' | 'qwen-vl'
+    provider: 'openai',           // 'openai' | 'anthropic'
     model: 'gpt-4o',
     apiKey: process.env.VISUAL_AI_KEY,
-    timeout: 30000,             // API 调用超时 (ms)
+    timeout: 30000,
   },
 
-  // 可访问性检查（零 AI 成本，白送的断言）
+  // 可访问性检查（默认开启，零 AI 成本）
   a11y: {
     enabled: true,
-    standard: 'wcag2aa',       // 'wcag2a' | 'wcag2aa' | 'wcag2aaa'
+    standard: 'wcag2aa',          // 'wcag2a' | 'wcag2aa' | 'wcag2aaa'
   },
 
   // 截图策略
   screenshot: {
-    mode: 'fullPage',           // 'viewport' | 'fullPage'
-    saveOnFailure: true,        // 失败时自动保存截图
-  },
-
-  // L2 组件测试
-  ct: {
-    testDir: './visual-tests/components',
-    testMatch: '**/*.visual.spec.{tsx,jsx}',
-  },
-
-  // L4 E2E 测试
-  e2e: {
-    testDir: './visual-tests/e2e',
-    testMatch: '**/*.visual.spec.ts',
-    baseURL: 'http://localhost:3000',
+    mode: 'fullPage',             // 'viewport' | 'fullPage'
+    saveOnFailure: true,
   },
 })
 ```
 
-## 包架构
+## API
+
+### `expectVisual(page, options)`
+
+核心断言函数，截取当前页面并交由 AI 视觉模型分析。
+
+```typescript
+await expectVisual(page, {
+  rules: ['按钮颜色醒目，与背景有足够对比度'],
+  a11y?: boolean       // 是否同步检查可访问性，默认 true
+  mode?: 'viewport' | 'fullPage'  // 截图模式，默认使用配置值
+  name?: string        // 用于失败截图的文件名标识
+})
+```
+
+### `defineConfig(config)`
+
+类型安全的配置定义辅助函数，返回带类型的配置对象。
+
+### `createProvider(type, config)`
+
+创建一个 AI Provider 实例，用于自定义场景。
+
+```typescript
+import { createProvider } from 'visual-test'
+
+const provider = createProvider('openai', {
+  apiKey: process.env.VISUAL_AI_KEY,
+  model: 'gpt-4o',
+})
+```
+
+## 架构
 
 ```
-visual-test                 ← 视觉测试框架（单包）
-├── visual-test/ct          ← L2 组件测试入口
-├── visual-test/e2e         ← L4 E2E 测试入口
-└── AI vision / a11y / screenshot  ← 内置核心能力
+用户测试代码
+    │  import { test, expectVisual } from 'visual-test/ct'
+    ▼
+┌─────────────────────────┐
+│      visual-test         │
+│  ┌─────────────────┐    │
+│  │  expectVisual    │    │
+│  │  AI 视觉断言 API  │    │
+│  └────────┬────────┘    │
+│           │              │
+│  ┌────────┴────────┐    │
+│  │  ai-vision  a11y │    │
+│  │  screenshot     │    │
+│  └─────────────────┘    │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│       Playwright         │
+│  浏览器 / 截图 / 测试运行  │
+└─────────────────────────┘
 ```
+
+visual-test 是 Playwright 的扩展，不是替代。你拥有 Playwright 的全部能力，在此之上获得 AI 视觉断言。
 
 ## 与其他工具的关系
 
-| 工具 | 用途 | visual-test 的关系 |
-|------|------|-----------|
-| Playwright | 浏览器自动化 | visual-test 的底层依赖 |
-| Vitest | 单元/逻辑测试 | 互补，不替代 |
-| Storybook | 组件开发 | 可配合使用 |
-| Chrome DevTools | 手动调试 | 互补 |
+| 工具 | 定位 | 关系 |
+|------|------|------|
+| Playwright | 浏览器自动化 + E2E 框架 | visual-test 的底层依赖 |
+| Vitest | 单元 / 组件逻辑测试 | 互补，visual-test 不做逻辑断言 |
+| Storybook | 组件开发与展示 | 可配合使用 |
 
 ## 文档
 
 - [框架设计文档](docs/design.md)
-- [四层测试方法论](docs/testing-methodology.md)
+- [测试方法论](docs/testing-methodology.md)
 
 ## 许可证
 
